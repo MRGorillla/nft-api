@@ -1,2 +1,6 @@
 /target
 .env
+/nft_storage
+/test_case
+*.db-shm
+*.db-wal

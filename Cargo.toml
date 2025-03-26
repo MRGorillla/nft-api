@@ -7,9 +7,11 @@ edition = "2021"
 actix-web = "4.0"       # Web server
 serde = { version = "1.0", features = ["derive"] } # For JSON
 serde_json = "1.0"      # More JSON help
-sqlx = { version = "0.6", features = ["runtime-tokio-native-tls", "sqlite"] } # Database
-tokio = { version = "1.0", features = ["full"] } # Async magic
 uuid = { version = "1.0", features = ["v4"] }   # For creating IDs
 bytes = "1.0"           # For handling image data
 futures = "0.3"         # More async help
 dotenv = "0.15"
+sqlx = { version = "0.6", features = ["runtime-tokio-native-tls", "sqlite", "chrono"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.0", features = ["full"] }
+actix-multipart = "0.6"
