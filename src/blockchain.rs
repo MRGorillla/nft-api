@@ -1,22 +1,17 @@
 use ethers::{
     prelude::*,
     types::{Address, U256},
+    contract::Contract,
 };
 use std::sync::Arc;
 use std::str::FromStr;
 use std::error::Error;
-use std::path::Path;
-
-// Include the ABI from the compiled contract
-abigen!(
-    MyNFT,
-    "./src/MyNFT.json",
-    event_derives(serde::Deserialize, serde::Serialize)
-);
+// Remove unused import
+// use std::path::Path;
 
 #[derive(Clone)]
 pub struct BlockchainService {
-    contract: ethers::contract::Contract<SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>>,
+    contract: Arc<Contract<SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>>>,
     pub wallet_address: Address,
 }
 
@@ -41,18 +36,12 @@ impl BlockchainService {
         // Connect to the contract
         let contract_addr = Address::from_str(contract_address)?;
         
-        // Check if the ABI file exists
-        let abi_path = Path::new("src/MyNFT.json");
-        if !abi_path.exists() {
-            return Err("ABI file not found at src/MyNFT.json. Please copy it from your blockchain artifacts.".into());
-        }
+        // Load ABI from file
+        let abi_json = include_str!("./MyNFT.json");
+        let abi: ethers::abi::Abi = serde_json::from_str(abi_json)?;
         
-        // Read the ABI from file
-        let abi_str = std::fs::read_to_string(abi_path)?;
-        let abi: ethers::abi::Abi = serde_json::from_str(&abi_str)?;
-        
-        // Create the contract
-        let contract = ethers::contract::Contract::new(contract_addr, abi, client);
+        // Create the contract instance
+        let contract = Arc::new(Contract::new(contract_addr, abi, client.clone()));
         
         Ok(Self {
             contract,
@@ -67,12 +56,9 @@ impl BlockchainService {
     ) -> Result<(U256, String), Box<dyn Error>> {
         let recipient_addr = Address::from_str(recipient)?;
         
-        // Call the mintNFT function using the dynamic approach
-        let params = (recipient_addr, token_uri.to_string());
-        let call = self.contract.method::<_, U256>("mintNFT", params)?;
-        
-        // Send the transaction
-        let tx = call.send().await?;
+        // Fix: Store the method call in a variable before sending
+        let method_call = self.contract.method::<_, U256>("mintNFT", (recipient_addr, token_uri.to_string()))?;
+        let tx = method_call.send().await?;
         
         // Get the transaction hash
         let tx_hash = tx.tx_hash();
@@ -91,5 +77,46 @@ impl BlockchainService {
         }
         
         Err("Failed to extract token ID from transaction logs".into())
+    }
+    
+    // Fix the transfer_nft method to match what's being called in main.rs
+    pub async fn transfer_nft(
+        &self,
+        from_address: &str,
+        to_address: &str,
+        token_id: &str,
+    ) -> Result<String, Box<dyn Error>> {
+        // Convert the addresses and token ID from strings
+        let from_addr = Address::from_str(from_address)?;
+        let to_addr = Address::from_str(to_address)?;
+        let token_id_u256 = U256::from_dec_str(token_id)?;
+        
+        // Fix: Store the method call in a variable before sending
+        let method_call = self.contract.method::<_, ()>("transferFrom", (from_addr, to_addr, token_id_u256))?;
+        let tx = method_call.send().await?;
+        
+        // Get the transaction hash
+        let tx_hash = tx.tx_hash();
+        
+        // Wait for the transaction to be mined
+        tx.await?
+            .ok_or("Transaction failed to be mined")?;
+            
+        Ok(format!("{:?}", tx_hash))
+    }
+
+    // Add missing methods that are called in main.rs
+    pub async fn get_token_id(&self, nft_id: &str) -> Result<Option<String>, Box<dyn Error>> {
+        // In a real implementation, this would query the database or blockchain
+        // For now, return a dummy token ID
+        println!("Looking up token ID for NFT: {}", nft_id);
+        Ok(Some("1".to_string()))
+    }
+
+    pub async fn get_user_wallet_address(&self, user_id: &str) -> Result<Option<String>, Box<dyn Error>> {
+        // In a real implementation, this would query a user-to-wallet mapping
+        // For now, return the wallet address from this service
+        println!("Looking up wallet address for user: {}", user_id);
+        Ok(Some(format!("{:?}", self.wallet_address)))
     }
 }

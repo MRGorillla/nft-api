@@ -81,18 +81,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create transfers table
     println!("Creating transfers table...");
     sqlx::query(r#"
-        CREATE TABLE IF NOT EXISTS transfers (
-            id TEXT PRIMARY KEY,
-            nft_id TEXT NOT NULL,
-            from_user_id TEXT NOT NULL,
-            to_user_id TEXT NOT NULL,
-            transferred_at INTEGER NOT NULL,
-            FOREIGN KEY (nft_id) REFERENCES nfts(id),
-            FOREIGN KEY (from_user_id) REFERENCES users(id),
-            FOREIGN KEY (to_user_id) REFERENCES users(id)
-        )
+            CREATE TABLE IF NOT EXISTS transfers (
+                id VARCHAR(255) PRIMARY KEY,
+                nft_id VARCHAR(255) NOT NULL,
+                from_user_id VARCHAR(255) NOT NULL,
+                to_user_id VARCHAR(255) NOT NULL,
+                transferred_at TIMESTAMP NOT NULL,
+                transaction_hash VARCHAR(255),
+                property_data TEXT,
+                FOREIGN KEY (nft_id) REFERENCES nfts(id),
+                FOREIGN KEY (from_user_id) REFERENCES users(id),
+                FOREIGN KEY (to_user_id) REFERENCES users(id)
+            )
     "#).execute(&pool).await?;
-
+    println!("Creating index on transfers.nft_id...");
+    sqlx::query(r#"
+            CREATE INDEX IF NOT EXISTS idx_transfers_nft_id ON transfers(nft_id)
+    "#).execute(&pool).await?;
+    
     println!("Database initialization complete!");
     Ok(())
 }

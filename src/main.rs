@@ -11,7 +11,7 @@ mod database;
 use database::Database;
 
 mod models;
-use models::{User, NewUser, NewNFT, Transfer, TransferRequest};  // Remove NFT
+use models::{User, NewUser, NewNFT, TransferRequest};  // Removed unused Transfer import
 mod blockchain;
 mod ipfs;
 use crate::blockchain::BlockchainService;
@@ -244,20 +244,64 @@ async fn transfer_nft(
     
     let transfer_id = Uuid::new_v4().to_string();
     
-    // Do the transfer with the actual owner
+    // Get the NFT data to record in the transfer log
+    let nft_data = match data.db.get_nft_by_id(&nft_id_str).await {
+        Ok(nft) => serde_json::to_string(&nft).ok(),
+        Err(_) => None,
+    };
+    
+    // Handle blockchain transfer if available
+    let mut tx_hash: Option<String> = None;
+    if let Some(ref blockchain) = data.blockchain {
+        if let Some(ref token_id) = blockchain.get_token_id(&nft_id_str).await.ok().flatten() {
+            // Assuming you have wallet addresses for users
+            if let (Some(from_address), Some(to_address)) = (
+                blockchain.get_user_wallet_address(&current_owner).await.ok().flatten(),
+                blockchain.get_user_wallet_address(&transfer.to_user_id).await.ok().flatten()
+            ) {
+                match blockchain.transfer_nft(&from_address, &to_address, token_id).await {
+                    Ok(hash) => {
+                        let hash_clone = hash.clone(); // Clone before moving
+                        tx_hash = Some(hash);
+                        println!("NFT transferred on blockchain. TX hash: {}", hash_clone);
+                    },
+                    Err(e) => {
+                        eprintln!("Blockchain transfer failed but will continue with database update: {}", e);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Do the transfer with the actual owner and record transaction details
     match data.db.transfer_nft(
         &transfer_id,
         &nft_id_str,
         &current_owner,
         &transfer.to_user_id,
+        nft_data.as_deref(),
+        tx_hash.as_deref(),
     ).await {
-        Ok(_) => HttpResponse::Ok().json(Transfer {
-            id: transfer_id,
-            nft_id: nft_id_str,
-            from_user_id: current_owner,
-            to_user_id: transfer.to_user_id.clone(),
-            transferred_at: chrono::Local::now().naive_local(),
-        }),
+        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
+            "id": transfer_id,
+            "nft_id": nft_id_str,
+            "from_user_id": current_owner,
+            "to_user_id": transfer.to_user_id,
+            "transferred_at": chrono::Local::now().naive_local(),
+            "transaction_hash": tx_hash,
+            "status": "completed"
+        })),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+// Add a new endpoint to get NFT transfer history
+async fn get_nft_transfer_history(
+    data: web::Data<AppState>,
+    nft_id: web::Path<String>,
+) -> impl Responder {
+    match data.db.get_nft_transfer_history(&nft_id).await {
+        Ok(transfers) => HttpResponse::Ok().json(transfers),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }

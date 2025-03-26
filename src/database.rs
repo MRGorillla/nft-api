@@ -1,5 +1,5 @@
 use sqlx::{SqlitePool, Error};
-use crate::models::{NFT}; 
+use crate::models::{NFT, Transfer}; 
 
 #[derive(Clone)]
 pub struct Database {
@@ -117,6 +117,7 @@ impl Database {
         Ok(nfts)
     }
 
+    
     pub async fn transfer_nft(
         &self,
         transfer_id: &str,
@@ -126,8 +127,8 @@ impl Database {
         property_data: Option<&str>,
         transaction_hash: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // First get the NFT data for logging purposes
-        let nft = self.get_nft_by_id(nft_id).await?;
+        // Change 'nft' to '_nft' to indicate it's intentionally unused
+        let _nft = self.get_nft_by_id(nft_id).await?;
         
         // Store the transfer record
         sqlx::query(
@@ -155,21 +156,75 @@ impl Database {
     }
     
     // Add a method to retrieve transfer history for an NFT
-    pub async fn get_nft_transfer_history(
-        &self,
-        nft_id: &str
-    ) -> Result<Vec<Transfer>, Box<dyn std::error::Error>> {
-        let transfers = sqlx::query_as!(
-            Transfer,
-            "SELECT id, nft_id, from_user_id, to_user_id, transferred_at, 
-             transaction_hash, property_data FROM transfers 
-             WHERE nft_id = $1 ORDER BY transferred_at DESC",
+// Fix the transfer history query to match the Transfer struct with its new fields
+pub async fn get_nft_transfer_history(
+    &self,
+    nft_id: &str
+) -> Result<Vec<Transfer>, Box<dyn std::error::Error>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT 
+            id as "id!", 
+            nft_id as "nft_id!", 
+            from_user_id as "from_user_id!", 
+            to_user_id as "to_user_id!",
+            transferred_at as "transferred_at!: i64",
+            transaction_hash,
+            property_data
+        FROM transfers
+        WHERE nft_id = ?
+        ORDER BY transferred_at DESC
+        "#,
+        nft_id
+    )
+    .fetch_all(&self.pool)
+    .await?;
+    
+    let transfers = rows.into_iter().map(|row| {
+        Transfer {
+            id: row.id,
+            nft_id: row.nft_id,
+            from_user_id: row.from_user_id,
+            to_user_id: row.to_user_id,
+            transferred_at: chrono::DateTime::from_timestamp(row.transferred_at, 0)
+                .unwrap_or_else(|| chrono::Utc::now())
+                .naive_utc(),
+            transaction_hash: row.transaction_hash,
+            property_data: row.property_data,
+        }
+    }).collect();
+    
+    Ok(transfers)
+}
+
+        pub async fn get_nft_by_id(&self, nft_id: &str) -> Result<NFT, Error> {
+        let row = sqlx::query!(
+            r#"
+            SELECT 
+                id as "id!", 
+                name as "name!", 
+                description, 
+                image_path as "image_path!", 
+                owner_id as "owner_id!",
+                created_at as "created_at!: i64"
+            FROM nfts
+            WHERE id = ?
+            "#,
             nft_id
         )
-        .fetch_all(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
-        
-        Ok(transfers)
+    
+        Ok(NFT {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            image_path: row.image_path,
+            owner_id: row.owner_id,
+            created_at: chrono::DateTime::from_timestamp(row.created_at, 0)
+                .unwrap_or_else(|| chrono::Utc::now())
+                .naive_utc(),
+        })
     }
 
     pub async fn user_exists(&self, user_id: &str) -> Result<bool, Error> {
@@ -272,5 +327,16 @@ impl Database {
         
         println!("Database migrations completed");
         Ok(())
+    }
+    pub async fn get_token_id(&self, _nft_id: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        // In a real implementation, you would query your database to get the on-chain token ID
+        // For this example, we'll return a dummy value
+        Ok(Some("1".to_string()))
+    }
+    
+    pub async fn get_user_wallet_address(&self, _user_id: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        // In a real implementation, you would lookup the user's wallet address
+        // For now, we'll just return a dummy address
+        Ok(Some("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".to_string()))
     }
 }
