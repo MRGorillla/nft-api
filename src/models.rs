@@ -40,7 +40,9 @@ pub struct Transfer {
     pub nft_id: String,
     pub from_user_id: String,
     pub to_user_id: String,
-    pub transferred_at: NaiveDateTime,
+    pub transferred_at: chrono::NaiveDateTime,
+    pub transaction_hash: Option<String>, // For blockchain transactions
+    pub property_data: Option<String>,    // JSON data about the property at time of transfer
 }
 
 #[derive(Debug, Serialize, Deserialize)]

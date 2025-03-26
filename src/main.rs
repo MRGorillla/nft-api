@@ -11,12 +11,20 @@ mod database;
 use database::Database;
 
 mod models;
-use models::{User, NewUser, NFT, NewNFT, Transfer, TransferRequest};
+use models::{User, NewUser, NewNFT, Transfer, TransferRequest};  // Remove NFT
+mod blockchain;
+mod ipfs;
+use crate::blockchain::BlockchainService;
+use crate::ipfs::IpfsStorage;
+mod migrations;
 
 struct AppState {
     db: Database,
     storage_path: String,
+    blockchain: Option<BlockchainService>,
+    ipfs: Option<IpfsStorage>,
 }
+
 // Implement your handler functions
 async fn create_user(
     data: web::Data<AppState>,
@@ -36,6 +44,7 @@ async fn create_nft(
     let mut nft_data: Option<NewNFT> = None;
     let mut image_data: Option<Vec<u8>> = None;
     
+    // Extract data from multipart form
     while let Ok(Some(mut field)) = payload.try_next().await {
         let content_disposition = field.content_disposition();
         if let Some(name) = content_disposition.get_name() {
@@ -69,11 +78,13 @@ async fn create_nft(
         }
     }
 
+    // Validate NFT data
     let nft_payload = match nft_data {
         Some(data) => data,
         None => return HttpResponse::BadRequest().body("Missing NFT metadata"),
     };
 
+    // Verify owner exists
     let owner_id = &nft_payload.owner_id;
     match data.db.user_exists(owner_id).await {
         Ok(true) => {}, // User exists, proceed
@@ -83,39 +94,100 @@ async fn create_nft(
             .body(format!("Failed to verify user: {}", e.to_string())),
     }
 
-
+    // Validate image data
     let image = match image_data {
         Some(data) => data,
         None => return HttpResponse::BadRequest().body("Missing image data"),
     };
 
     let nft_id = Uuid::new_v4().to_string();
-
     
+    // Save image locally
     let image_path = format!("{}/{}.jpg", data.storage_path, nft_id);
     if let Err(e) = tokio::fs::write(&image_path, &image).await {
         return HttpResponse::InternalServerError().body(e.to_string());
     }
     
+    // Variables for blockchain/IPFS data
+    let mut token_id: Option<String> = None;
+    let mut ipfs_image_cid: Option<String> = None;
+    let mut ipfs_metadata_cid: Option<String> = None;
+    let mut blockchain_tx_hash: Option<String> = None;
+    
+    // If IPFS service is available, upload the image
+    if let Some(ref ipfs) = data.ipfs {
+        match ipfs.upload_file(&image).await {
+            Ok(cid) => {
+                ipfs_image_cid = Some(cid.clone());
+                println!("Image uploaded to IPFS with CID: {}", cid);
+                
+                // Create and upload metadata
+                if let Ok(metadata_cid) = ipfs.upload_metadata(
+                    &nft_payload.name,
+                    nft_payload.description.as_deref(),
+                    &cid
+                ).await {
+                    ipfs_metadata_cid = Some(metadata_cid.clone());
+                    println!("Metadata uploaded to IPFS with CID: {}", metadata_cid);
+                    
+                    // If blockchain service is available, mint the NFT
+                    if let Some(ref blockchain) = data.blockchain {
+                        // The URI for the token metadata
+                        let token_uri = ipfs.get_ipfs_uri(&metadata_cid);
+                        
+                        // Convert wallet address to string for the recipient
+                        let recipient = blockchain.wallet_address.to_string();
+                        
+                        match blockchain.mint_nft(&recipient, &token_uri).await {
+                            Ok((id, tx_hash)) => {
+                                token_id = Some(id.to_string());
+                                blockchain_tx_hash = Some(tx_hash.clone());
+                                println!("NFT minted with token ID: {} and TX: {}", id, tx_hash);
+                            },
+                            Err(e) => {
+                                eprintln!("Failed to mint NFT: {}", e);
+                            }
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to upload image to IPFS: {}", e);
+            }
+        }
+    }
+    
+    // Update your database schema to include the new fields
+    // You might need to modify your database.rs to add these fields
     match data.db.create_nft(
         &nft_id,
         &nft_payload.name,
         nft_payload.description.as_deref(),
         &image_path,
-        &owner_id,
+        &nft_payload.owner_id,
+        token_id.as_deref(),
+        ipfs_image_cid.as_deref(),
+        ipfs_metadata_cid.as_deref(),
+        blockchain_tx_hash.as_deref(),
     ).await {
         Ok(_) => {
             // Create a valid timestamp
             let now = chrono::Utc::now().naive_utc();
             
-            HttpResponse::Ok().json(NFT {
-                id: nft_id,
-                name: nft_payload.name,
-                description: nft_payload.description,
-                image_path,
-                owner_id: owner_id.to_string(),
-                created_at: now,
-            })
+            // Respond with the NFT information, including blockchain and IPFS data
+            HttpResponse::Ok().json(serde_json::json!({
+                "id": nft_id,
+                "name": nft_payload.name,
+                "description": nft_payload.description,
+                "image_path": image_path,
+                "owner_id": owner_id.to_string(),
+                "created_at": now,
+                "token_id": token_id,
+                "ipfs_image_cid": ipfs_image_cid,
+                "ipfs_metadata_cid": ipfs_metadata_cid,
+                "blockchain_tx_hash": blockchain_tx_hash,
+                "ipfs_gateway_url": ipfs_image_cid.as_ref().map(|cid| format!("https://ipfs.io/ipfs/{}", cid)),
+            }))
         },
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
@@ -128,6 +200,19 @@ async fn get_user_nfts(
 ) -> impl Responder {
     match data.db.get_nfts_by_owner(&user_id).await {
         Ok(nfts) => HttpResponse::Ok().json(nfts),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+async fn get_user(
+    data: web::Data<AppState>,
+    user_id: web::Path<String>,
+) -> impl Responder {
+    // Implement user retrieval logic here
+    // For now, let's just return a simple response
+    match data.db.user_exists(&user_id).await {
+        Ok(true) => HttpResponse::Ok().body("User exists"),
+        Ok(false) => HttpResponse::NotFound().body("User not found"),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
@@ -176,26 +261,64 @@ async fn transfer_nft(
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    
-    let storage_path = "./nft_storage";
-    tokio::fs::create_dir_all(storage_path).await?;
+    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./nft_storage".to_string());
+    tokio::fs::create_dir_all(&storage_path).await?;
     
     let database_url = env::var("DATABASE_URL")
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .expect("DATABASE_URL must be set");
         
     let db = Database::new(&database_url).await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    
+    // Run migrations
+    db.run_migrations_for_instance().await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    
+    // Initialize blockchain service if env variables are set
+    let blockchain = if let (Ok(rpc_url), Ok(contract_address)) = (
+        env::var("ETH_RPC_URL"),
+        env::var("NFT_CONTRACT_ADDRESS"),
+    ) {
+        let private_key = env::var("WALLET_PRIVATE_KEY")
+            .unwrap_or("0xb4d59920ba76441bbfcf9e6f517528cb75dcf7542aa454b966f0aa85724383be".to_string());
+        
+        match BlockchainService::new(&rpc_url, &contract_address, &private_key).await {
+            Ok(service) => {
+                println!("Blockchain service initialized with wallet: {:?}", service.wallet_address);
+                Some(service)
+            }
+            Err(e) => {
+                eprintln!("Failed to initialize blockchain service: {}", e);
+                None
+            }
+        }
+    } else {
+        println!("Blockchain service not configured, running in local-only mode");
+        None
+    };
+    
+    let ipfs = match IpfsStorage::new() {
+        ipfs => {
+            println!("IPFS service initialized");
+            Some(ipfs)
+        }
+    };
     
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(AppState {
                 db: db.clone(),
-                storage_path: storage_path.to_string(),
+                storage_path: storage_path.clone(),
+                blockchain: blockchain.clone(),
+                ipfs: ipfs.clone(),
             }))
+            // Routes remain the same
             .route("/users", web::post().to(create_user))
+            .route("/users/{user_id}", web::get().to(get_user))
             .route("/nfts", web::post().to(create_nft))
             .route("/users/{user_id}/nfts", web::get().to(get_user_nfts))
             .route("/nfts/{nft_id}/transfer", web::post().to(transfer_nft))

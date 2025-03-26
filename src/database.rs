@@ -6,7 +6,11 @@ pub struct Database {
     pool: SqlitePool,
 }
 
-impl Database {
+impl Database {    
+    pub async fn run_migrations_for_instance(&self) -> Result<(), Error> {
+        Self::run_migrations(&self.pool).await
+    }
+
     pub async fn new(database_url: &str) -> Result<Self, Error> {
         let pool = SqlitePool::connect(database_url).await?;
         Ok(Self { pool })
@@ -33,24 +37,49 @@ impl Database {
         description: Option<&str>,
         image_path: &str,
         owner_id: &str,
+        token_id: Option<&str>,
+        ipfs_image_cid: Option<&str>,
+        ipfs_metadata_cid: Option<&str>,
+        blockchain_tx_hash: Option<&str>,
     ) -> Result<(), Error> {
-        // Add created_at with SQLite's timestamp
+        // Ensure blockchain columns exist
+        let column_exists = sqlx::query!(
+            "SELECT COUNT(*) as count FROM pragma_table_info('nfts') WHERE name = ?",
+            "token_id"
+        )
+        .fetch_one(&self.pool)
+        .await?;
+    
+        if column_exists.count == 0 {
+            sqlx::query("ALTER TABLE nfts ADD COLUMN token_id TEXT").execute(&self.pool).await.ok();
+            sqlx::query("ALTER TABLE nfts ADD COLUMN ipfs_image_cid TEXT").execute(&self.pool).await.ok();
+            sqlx::query("ALTER TABLE nfts ADD COLUMN ipfs_metadata_cid TEXT").execute(&self.pool).await.ok();
+            sqlx::query("ALTER TABLE nfts ADD COLUMN blockchain_tx_hash TEXT").execute(&self.pool).await.ok();
+        }
+    
+        // Now try the insertion
         sqlx::query!(
             r#"
-            INSERT INTO nfts (id, name, description, image_path, owner_id, created_at)
-            VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'))
+            INSERT INTO nfts (
+                id, name, description, image_path, owner_id, created_at,
+                token_id, ipfs_image_cid, ipfs_metadata_cid, blockchain_tx_hash
+            )
+            VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?, ?, ?)
             "#,
             id,
             name,
             description,
             image_path,
-            owner_id
+            owner_id,
+            token_id,
+            ipfs_image_cid,
+            ipfs_metadata_cid,
+            blockchain_tx_hash
         )
         .execute(&self.pool)
         .await?;
         Ok(())
     }
-
     pub async fn get_nfts_by_owner(&self, owner_id: &str) -> Result<Vec<NFT>, Error> {
         // Fix the query to handle NULL fields properly and use direct type annotation
         let rows = sqlx::query!(
@@ -94,38 +123,53 @@ impl Database {
         nft_id: &str,
         from_user_id: &str,
         to_user_id: &str,
-    ) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await?;
+        property_data: Option<&str>,
+        transaction_hash: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // First get the NFT data for logging purposes
+        let nft = self.get_nft_by_id(nft_id).await?;
         
-        // Record the transfer with timestamp
-        sqlx::query!(
-            r#"
-            INSERT INTO transfers (id, nft_id, from_user_id, to_user_id, transferred_at)
-            VALUES (?, ?, ?, ?, strftime('%s', 'now'))
-            "#,
-            transfer_id,
-            nft_id,
-            from_user_id,
-            to_user_id
+        // Store the transfer record
+        sqlx::query(
+            "INSERT INTO transfers (id, nft_id, from_user_id, to_user_id, property_data, transaction_hash, transferred_at) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         )
-        .execute(&mut *tx)
+        .bind(transfer_id)
+        .bind(nft_id)
+        .bind(from_user_id)
+        .bind(to_user_id)
+        .bind(property_data)
+        .bind(transaction_hash)
+        .bind(chrono::Local::now().naive_local())
+        .execute(&self.pool)
         .await?;
-
-        // Update NFT ownership
-        sqlx::query!(
-            r#"
-            UPDATE nfts
-            SET owner_id = ?
-            WHERE id = ?
-            "#,
-            to_user_id,
+        
+        // Update the NFT ownership
+        sqlx::query("UPDATE nfts SET owner_id = $1 WHERE id = $2")
+            .bind(to_user_id)
+            .bind(nft_id)
+            .execute(&self.pool)
+            .await?;
+        
+        Ok(())
+    }
+    
+    // Add a method to retrieve transfer history for an NFT
+    pub async fn get_nft_transfer_history(
+        &self,
+        nft_id: &str
+    ) -> Result<Vec<Transfer>, Box<dyn std::error::Error>> {
+        let transfers = sqlx::query_as!(
+            Transfer,
+            "SELECT id, nft_id, from_user_id, to_user_id, transferred_at, 
+             transaction_hash, property_data FROM transfers 
+             WHERE nft_id = $1 ORDER BY transferred_at DESC",
             nft_id
         )
-        .execute(&mut *tx)
+        .fetch_all(&self.pool)
         .await?;
-
-        tx.commit().await?;
-        Ok(())
+        
+        Ok(transfers)
     }
 
     pub async fn user_exists(&self, user_id: &str) -> Result<bool, Error> {
@@ -150,5 +194,83 @@ impl Database {
         .await?;
         
         Ok(result.map(|r| r.owner_id))
+    }
+    pub async fn run_migrations(pool: &SqlitePool) -> Result<(), Error> {
+        println!("Running database migrations...");
+    
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+    
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS nfts (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                image_path TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+    
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS transfers (
+                id TEXT PRIMARY KEY,
+                nft_id TEXT NOT NULL,
+                from_user_id TEXT NOT NULL,
+                to_user_id TEXT NOT NULL,
+                transferred_at INTEGER NOT NULL,
+                FOREIGN KEY (nft_id) REFERENCES nfts(id),
+                FOREIGN KEY (from_user_id) REFERENCES users(id),
+                FOREIGN KEY (to_user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await?;
+    
+        let column_exists = sqlx::query!(
+            "SELECT COUNT(*) as count FROM pragma_table_info('nfts') WHERE name = ?",
+            "token_id"
+        )
+        .fetch_one(pool)
+        .await?;
+    
+        if column_exists.count == 0 {
+            println!("Adding blockchain columns to nfts table...");
+    
+            sqlx::query("ALTER TABLE nfts ADD COLUMN IF NOT EXISTS token_id TEXT")
+                .execute(pool)
+                .await?;
+            sqlx::query("ALTER TABLE nfts ADD COLUMN IF NOT EXISTS ipfs_image_cid TEXT")
+                .execute(pool)
+                .await?;
+            sqlx::query("ALTER TABLE nfts ADD COLUMN IF NOT EXISTS ipfs_metadata_cid TEXT")
+                .execute(pool)
+                .await?;
+            sqlx::query("ALTER TABLE nfts ADD COLUMN IF NOT EXISTS blockchain_tx_hash TEXT")
+                .execute(pool)
+                .await?;
+            
+            println!("Blockchain columns added successfully");
+        } else {
+            println!("Blockchain columns already exist");
+        }
+        
+        println!("Database migrations completed");
+        Ok(())
     }
 }

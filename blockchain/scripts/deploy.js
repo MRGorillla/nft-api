@@ -1,13 +1,23 @@
+const hre = require("hardhat");
+
 async function main() {
-    const MyNFT = await ethers.getContractFactory("MyNFT");
-    const myNFT = await MyNFT.deploy();
-    await myNFT.deployed();
-    console.log("MyNFT deployed to:", myNFT.address);
-  }
+  console.log("Deploying MyNFT contract...");
   
-  main()
-    .then(() => process.exit(0))
-    .catch((error) => {
-      console.error(error);
-      process.exit(1);
-    });
+  // Get the contract factory
+  const MyNFT = await hre.ethers.getContractFactory("MyNFT");
+  
+  // Deploy the contract
+  const myNFT = await MyNFT.deploy();
+  await myNFT.waitForDeployment();
+  
+  const address = await myNFT.getAddress();
+  console.log("MyNFT deployed to:", address);
+}
+
+// Execute the deployment
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
