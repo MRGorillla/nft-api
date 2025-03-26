@@ -138,4 +138,17 @@ impl Database {
         
         Ok(result.count > 0)
     }
+    pub async fn get_nft_owner(&self, nft_id: &str) -> Result<Option<String>, Error> {
+        let result = sqlx::query!(
+            r#"
+            SELECT owner_id FROM nfts
+            WHERE id = ?
+            "#,
+            nft_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        
+        Ok(result.map(|r| r.owner_id))
+    }
 }

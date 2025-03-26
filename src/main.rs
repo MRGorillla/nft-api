@@ -137,26 +137,45 @@ async fn transfer_nft(
     nft_id: web::Path<String>,
     transfer: web::Json<TransferRequest>,
 ) -> impl Responder {
-    let from_user_id = "temp_owner";
+    let nft_id_str = nft_id.into_inner();
+    
+    // First get the current owner of the NFT
+    let current_owner = match data.db.get_nft_owner(&nft_id_str).await {
+        Ok(Some(owner_id)) => owner_id,
+        Ok(None) => return HttpResponse::NotFound()
+            .body(format!("NFT with ID '{}' not found", nft_id_str)),
+        Err(e) => return HttpResponse::InternalServerError()
+            .body(format!("Failed to get NFT owner: {}", e.to_string())),
+    };
+    
+    // Make sure the recipient user exists
+    match data.db.user_exists(&transfer.to_user_id).await {
+        Ok(true) => {}, // User exists, proceed
+        Ok(false) => return HttpResponse::BadRequest()
+            .body(format!("User with ID '{}' does not exist", transfer.to_user_id)),
+        Err(e) => return HttpResponse::InternalServerError()
+            .body(format!("Failed to verify user: {}", e.to_string())),
+    }
+    
     let transfer_id = Uuid::new_v4().to_string();
     
+    // Do the transfer with the actual owner
     match data.db.transfer_nft(
         &transfer_id,
-        &nft_id,
-        &from_user_id,
+        &nft_id_str,
+        &current_owner,
         &transfer.to_user_id,
     ).await {
         Ok(_) => HttpResponse::Ok().json(Transfer {
             id: transfer_id,
-            nft_id: nft_id.into_inner(),
-            from_user_id: from_user_id.to_string(),
+            nft_id: nft_id_str,
+            from_user_id: current_owner,
             to_user_id: transfer.to_user_id.clone(),
             transferred_at: chrono::Local::now().naive_local(),
         }),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
