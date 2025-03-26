@@ -104,14 +104,19 @@ async fn create_nft(
         &image_path,
         &owner_id,
     ).await {
-        Ok(_) => HttpResponse::Ok().json(NFT {
-            id: nft_id,
-            name: nft_payload.name,
-            description: nft_payload.description,
-            image_path,
-            owner_id: owner_id.to_string(),
-            created_at: chrono::Local::now().naive_local(),
-        }),
+        Ok(_) => {
+            // Create a valid timestamp
+            let now = chrono::Utc::now().naive_utc();
+            
+            HttpResponse::Ok().json(NFT {
+                id: nft_id,
+                name: nft_payload.name,
+                description: nft_payload.description,
+                image_path,
+                owner_id: owner_id.to_string(),
+                created_at: now,
+            })
+        },
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }

@@ -1,4 +1,5 @@
 use sqlx::{SqlitePool, Error};
+use crate::models::{NFT}; 
 
 #[derive(Clone)]
 pub struct Database {
@@ -33,10 +34,11 @@ impl Database {
         image_path: &str,
         owner_id: &str,
     ) -> Result<(), Error> {
+        // Add created_at with SQLite's timestamp
         sqlx::query!(
             r#"
-            INSERT INTO nfts (id, name, description, image_path, owner_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO nfts (id, name, description, image_path, owner_id, created_at)
+            VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'))
             "#,
             id,
             name,
@@ -49,23 +51,41 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_nfts_by_owner(&self, owner_id: &str) -> Result<Vec<crate::models::NFT>, Error> {
-        sqlx::query_as(
+    pub async fn get_nfts_by_owner(&self, owner_id: &str) -> Result<Vec<NFT>, Error> {
+        // Fix the query to handle NULL fields properly and use direct type annotation
+        let rows = sqlx::query!(
             r#"
             SELECT 
-                id, 
-                name, 
+                id as "id!", 
+                name as "name!", 
                 description, 
-                image_path, 
-                owner_id, 
-                strftime('%s', created_at) as created_at
+                image_path as "image_path!", 
+                owner_id as "owner_id!",
+                created_at as "created_at!: i64"
             FROM nfts
             WHERE owner_id = ?
             "#,
+            owner_id
         )
-        .bind(owner_id)
         .fetch_all(&self.pool)
-        .await
+        .await?;
+
+        // Convert the raw SQL rows to NFT structs
+        let nfts = rows.into_iter().map(|row| {
+            NFT {
+                id: row.id,
+                name: row.name,
+                description: row.description,
+                image_path: row.image_path,
+                owner_id: row.owner_id,
+                // Use chrono::DateTime::from_timestamp instead of deprecated method
+                created_at: chrono::DateTime::from_timestamp(row.created_at, 0)
+                    .unwrap_or_else(|| chrono::Utc::now())
+                    .naive_utc(),
+            }
+        }).collect();
+
+        Ok(nfts)
     }
 
     pub async fn transfer_nft(
@@ -77,11 +97,11 @@ impl Database {
     ) -> Result<(), Error> {
         let mut tx = self.pool.begin().await?;
         
-        // Record the transfer
+        // Record the transfer with timestamp
         sqlx::query!(
             r#"
-            INSERT INTO transfers (id, nft_id, from_user_id, to_user_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO transfers (id, nft_id, from_user_id, to_user_id, transferred_at)
+            VALUES (?, ?, ?, ?, strftime('%s', 'now'))
             "#,
             transfer_id,
             nft_id,
@@ -118,17 +138,4 @@ impl Database {
         
         Ok(result.count > 0)
     }
-
-    // pub async fn get_user(&self, user_id: &str) -> Result<Option<crate::models::User>, Error> {
-    //     sqlx::query_as(
-    //         r#"
-    //         SELECT id, name
-    //         FROM users
-    //         WHERE id = ?
-    //         "#,
-    //     )
-    //     .bind(user_id)
-    //     .fetch_optional(&self.pool)
-    //     .await
-    // }
 }

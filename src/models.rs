@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use chrono::NaiveDateTime;
+// Remove unused import
+// use std::str::FromStr;
 
 #[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
 pub struct User {
@@ -13,26 +15,26 @@ pub struct NewUser {
     pub name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NFT {
     pub id: String,
     pub name: String,
-    #[sqlx(default)]  // Handle NULL descriptions
     pub description: Option<String>,
     pub image_path: String,
     pub owner_id: String,
-    #[sqlx(rename = "created_at")]
     pub created_at: NaiveDateTime,
 }
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewNFT {
     pub name: String,
     pub description: Option<String>,
-    pub owner_id: String,  // Add this field to require owner ID in payload
+    pub owner_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Vec<NFTAttribute>>,
 }
-#[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transfer {
     pub id: String,
     pub nft_id: String,
