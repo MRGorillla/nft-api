@@ -108,6 +108,17 @@ impl Database {
         Ok(())
     }
 
+    pub async fn user_exists(&self, user_id: &str) -> Result<bool, Error> {
+        let result = sqlx::query!(
+            "SELECT COUNT(*) as count FROM users WHERE id = ?",
+            user_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        
+        Ok(result.count > 0)
+    }
+
     // pub async fn get_user(&self, user_id: &str) -> Result<Option<crate::models::User>, Error> {
     //     sqlx::query_as(
     //         r#"

@@ -28,10 +28,10 @@ pub struct NFT {
 pub struct NewNFT {
     pub name: String,
     pub description: Option<String>,
+    pub owner_id: String,  // Add this field to require owner ID in payload
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Vec<NFTAttribute>>,
 }
-
 #[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
 pub struct Transfer {
     pub id: String,

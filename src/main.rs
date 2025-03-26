@@ -74,15 +74,23 @@ async fn create_nft(
         None => return HttpResponse::BadRequest().body("Missing NFT metadata"),
     };
 
+    let owner_id = &nft_payload.owner_id;
+    match data.db.user_exists(owner_id).await {
+        Ok(true) => {}, // User exists, proceed
+        Ok(false) => return HttpResponse::BadRequest()
+            .body(format!("User with ID '{}' does not exist", owner_id)),
+        Err(e) => return HttpResponse::InternalServerError()
+            .body(format!("Failed to verify user: {}", e.to_string())),
+    }
+
+
     let image = match image_data {
         Some(data) => data,
         None => return HttpResponse::BadRequest().body("Missing image data"),
     };
 
-    // Change this line in create_nft function (around line 83)
     let nft_id = Uuid::new_v4().to_string();
-    // Replace with the user ID you received from the create_user response
-    let owner_id = "3f3bb48a-9224-49b2-bab8-0aee4ea9a658"; // Replace with your actual ID
+
     
     let image_path = format!("{}/{}.jpg", data.storage_path, nft_id);
     if let Err(e) = tokio::fs::write(&image_path, &image).await {
