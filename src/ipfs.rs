@@ -21,12 +21,7 @@ impl IpfsStorage {
         Ok(res.hash)
     }
 
-    pub async fn upload_metadata(
-        &self,
-        name: &str,
-        description: Option<&str>,
-        image_cid: &str
-    ) -> Result<String, Box<dyn Error>> {
+    pub async fn upload_metadata(&self,name: &str,description: Option<&str>,image_cid: &str) -> Result<String, Box<dyn Error>> {
         let metadata = json!({
             "name": name,
             "description": description.unwrap_or(""),
@@ -46,5 +41,4 @@ impl IpfsStorage {
     
     pub fn get_ipfs_gateway_url(&self, cid: &str) -> String {
         format!("https://ipfs.io/ipfs/{}", cid)
-    }
-}
+    

@@ -8,11 +8,18 @@ use chrono::NaiveDateTime;
 pub struct User {
     pub id: String,
     pub name: String,
+    pub aadhaar_number: Option<String>,
+    pub phone_number: Option<String>,
+    pub email: Option<String>,
+    pub owner_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewUser {
     pub name: String,
+    pub aadhaar_number: Option<String>,
+    pub phone_number: Option<String>,
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

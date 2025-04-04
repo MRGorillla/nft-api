@@ -6,7 +6,6 @@ use ethers::{
 use std::sync::Arc;
 use std::str::FromStr;
 use std::error::Error;
-// Remove unused import
 // use std::path::Path;
 
 #[derive(Clone)]
@@ -16,11 +15,7 @@ pub struct BlockchainService {
 }
 
 impl BlockchainService {
-    pub async fn new(
-        rpc_url: &str,
-        contract_address: &str,
-        private_key: &str,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(rpc_url: &str,contract_address: &str,private_key: &str) -> Result<Self, Box<dyn Error>> {
         // Connect to the network
         let provider = Provider::<Http>::try_from(rpc_url)?;
         
@@ -49,11 +44,7 @@ impl BlockchainService {
         })
     }
     
-    pub async fn mint_nft(
-        &self,
-        recipient: &str,
-        token_uri: &str,
-    ) -> Result<(U256, String), Box<dyn Error>> {
+    pub async fn mint_nft(&self,recipient: &str,token_uri: &str) -> Result<(U256, String), Box<dyn Error>> {
         let recipient_addr = Address::from_str(recipient)?;
         
         // Fix: Store the method call in a variable before sending
@@ -80,12 +71,7 @@ impl BlockchainService {
     }
     
     // Fix the transfer_nft method to match what's being called in main.rs
-    pub async fn transfer_nft(
-        &self,
-        from_address: &str,
-        to_address: &str,
-        token_id: &str,
-    ) -> Result<String, Box<dyn Error>> {
+    pub async fn transfer_nft(&self,from_address: &str,to_address: &str,token_id: &str) -> Result<String, Box<dyn Error>> {
         // Convert the addresses and token ID from strings
         let from_addr = Address::from_str(from_address)?;
         let to_addr = Address::from_str(to_address)?;
@@ -118,5 +104,4 @@ impl BlockchainService {
         // For now, return the wallet address from this service
         println!("Looking up wallet address for user: {}", user_id);
         Ok(Some(format!("{:?}", self.wallet_address)))
-    }
-}
+    
